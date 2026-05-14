@@ -48,13 +48,33 @@ describe("data-pipeline", () => {
     expect(result.summary.issuesFound.date_inconsistency).toBe(1);
   });
 
-  it("quarantines clinically implausible values (e.g. negative age)", () => {
+  it("quarantines clinically implausible age values", () => {
     const result = runPipeline({
       csvText: `${HEADER}\nPT-001,NCT-001,SITE-A01,2023-04-12,-3,M,82.3,400mg BID,fatigue,No findings,partial_response,2024-01-15,active\n`,
     });
 
     expect(result.clean).toEqual([]);
     expect(result.quarantined[0]?.reasons).toContain("implausible_age");
+    expect(result.summary.issuesFound.implausible_age).toBe(1);
+  });
+
+  it("quarantines clinically implausible weight values", () => {
+    const result = runPipeline({
+      csvText: `${HEADER}\nPT-014,NCT-001,SITE-B03,2023-08-18,73,M,0,400mg BID,fatigue,PSA rising,progressive_disease,2024-05-01,withdrawn\n`,
+    });
+
+    expect(result.clean).toEqual([]);
+    expect(result.quarantined[0]?.reasons).toContain("implausible_weight");
+    expect(result.summary.issuesFound.implausible_weight).toBe(1);
+  });
+
+  it("normalizes clear categorical sex variants", () => {
+    const result = runPipeline({
+      csvText: `${HEADER}\nPT-040,NCT-007,SITE-G03,2022-03-01,69,Male,82.4,400mg BID,nausea,Compliance confirmed,stable_disease,2022-09-01,completed\n`,
+    });
+
+    expect(result.quarantined).toEqual([]);
+    expect(result.clean[0]?.sex).toBe("M");
   });
 
   it("quarantines rows missing required clinical fields", () => {
