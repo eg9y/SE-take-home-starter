@@ -5,12 +5,18 @@ import {
 	streamAnalysis,
 } from "../services/analysis-service.js";
 import { getTrialById, listTrials } from "../services/trial-service.js";
-import type { ClinicalTrial, ErrorResponse, TrialListResponse } from "../types.js";
+import type {
+	ClinicalTrial,
+	ErrorResponse,
+	TrialListResponse,
+} from "../types.js";
 import {
 	analyzeRequestSchema,
 	trialParamsSchema,
 	trialQuerySchema,
 } from "./trial-validation.js";
+
+const ANALYSIS_TIMEOUT_MS = 60_000;
 
 const router = Router();
 
@@ -44,7 +50,10 @@ router.get(
 
 router.get(
 	"/:id",
-	(req: Request<{ id: string }>, res: Response<ClinicalTrial | ErrorResponse>) => {
+	(
+		req: Request<{ id: string }>,
+		res: Response<ClinicalTrial | ErrorResponse>,
+	) => {
 		const parsedParams = trialParamsSchema.safeParse(req.params);
 		if (!parsedParams.success) {
 			res.status(400).json({ error: "Invalid trial id" });
@@ -60,25 +69,22 @@ router.get(
 	},
 );
 
-router.get(
-	"/:id/summary",
-	(req: Request<{ id: string }>, res: Response) => {
-		const parsedParams = trialParamsSchema.safeParse(req.params);
-		if (!parsedParams.success) {
-			res.status(400).json({ error: "Invalid trial id" });
-			return;
-		}
+router.get("/:id/summary", (req: Request<{ id: string }>, res: Response) => {
+	const parsedParams = trialParamsSchema.safeParse(req.params);
+	if (!parsedParams.success) {
+		res.status(400).json({ error: "Invalid trial id" });
+		return;
+	}
 
-		const trial = getTrialById(parsedParams.data.id);
-		if (!trial) {
-			res.status(404).json({ error: "Trial not found" });
-			return;
-		}
+	const trial = getTrialById(parsedParams.data.id);
+	if (!trial) {
+		res.status(404).json({ error: "Trial not found" });
+		return;
+	}
 
-		const summary = getTrialSummary(trial);
-		res.json(summary);
-	},
-);
+	const summary = getTrialSummary(trial);
+	res.json(summary);
+});
 
 router.post(
 	"/:id/analyze",
@@ -104,14 +110,31 @@ router.post(
 			return;
 		}
 
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
+		// res.on('close') fires when the underlying connection is closed,
+		// either because the client disconnected mid-stream or the response
+		// finished normally. Aborting after a normal finish is a no-op since
+		// streamAnalysis() has already returned.
+		const onResponseClose = () => controller.abort();
+		res.on("close", onResponseClose);
+
 		try {
-			await streamAnalysis(trial, parsedBody.data.focus, res);
+			await streamAnalysis(
+				trial,
+				parsedBody.data.focus,
+				res,
+				controller.signal,
+			);
 		} catch (err) {
 			if (!res.headersSent) {
 				res.status(500).json({
 					error: err instanceof Error ? err.message : "Analysis failed",
 				});
 			}
+		} finally {
+			clearTimeout(timeout);
+			res.off("close", onResponseClose);
 		}
 	},
 );

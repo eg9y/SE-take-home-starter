@@ -2,11 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { getTrialById, listTrials } from "../services/trial-service.js";
 
 vi.mock("ai", () => ({
-	streamText: vi.fn(() => ({
-		textStream: (async function* () {
-			yield "analysis";
-		})(),
-	})),
+	streamText: vi.fn(),
 }));
 
 vi.mock("@ai-sdk/openai", () => ({
@@ -15,6 +11,9 @@ vi.mock("@ai-sdk/openai", () => ({
 
 const express = (await import("express")).default;
 const { trialsRouter } = await import("../routes/trials.js");
+const { streamText } = (await import("ai")) as unknown as {
+	streamText: ReturnType<typeof vi.fn>;
+};
 
 async function withTrialsServer(
 	run: (baseUrl: string) => Promise<void>,
@@ -131,6 +130,58 @@ describe("trials routes", () => {
 			await expect(response.json()).resolves.toEqual({
 				error: "Invalid trial query",
 			});
+		});
+	});
+
+	it("aborts the OpenAI stream when the client disconnects", async () => {
+		// Capture the AbortSignal the route forwards to streamText so we can
+		// assert on its state without polling.
+		let capturedSignal: AbortSignal | undefined;
+		const signalReady = new Promise<AbortSignal>((resolve) => {
+			streamText.mockImplementationOnce(
+				({ abortSignal }: { abortSignal?: AbortSignal } = {}) => {
+					capturedSignal = abortSignal;
+					if (abortSignal) resolve(abortSignal);
+					return {
+						textStream: (async function* () {
+							if (!abortSignal || abortSignal.aborted) return;
+							await new Promise<void>((res) => {
+								abortSignal.addEventListener("abort", () => res(), {
+									once: true,
+								});
+							});
+						})(),
+					};
+				},
+			);
+		});
+
+		await withTrialsServer(async (baseUrl) => {
+			const controller = new AbortController();
+
+			const requestPromise = fetch(`${baseUrl}/trials/NCT-001/analyze`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ focus: "safety" }),
+				signal: controller.signal,
+			}).catch((err: unknown) => err);
+
+			const passedSignal = await signalReady;
+			expect(passedSignal).toBeInstanceOf(AbortSignal);
+			expect(passedSignal.aborted).toBe(false);
+
+			// Resolves when the server-side signal aborts (event-driven, no polling).
+			const aborted = new Promise<void>((resolve) => {
+				passedSignal.addEventListener("abort", () => resolve(), {
+					once: true,
+				});
+			});
+
+			controller.abort();
+			await aborted;
+			await requestPromise;
+
+			expect(capturedSignal!.aborted).toBe(true);
 		});
 	});
 

@@ -308,7 +308,7 @@ None noted.
 
 #### How to reproduce / evidence
 
-Start an analysis request, then close the client connection before the stream finishes. The server has no `req.on("close")` handling and does not pass an abort signal to the AI call.
+Start an analysis request, then close the client connection before the stream finishes. The server has no `req.on("close")` handling and does not pass an abort signal to the AI call. 
 
 #### Production impact
 
