@@ -8,6 +8,7 @@
     "dev": "tsx watch --env-file=.env src/server.ts",
     "start": "tsx --env-file=.env src/server.ts",
     "build": "tsc",
+    "generate:csv": "tsx src/scripts/generate-pipeline-csv.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
