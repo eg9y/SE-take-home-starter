@@ -210,8 +210,35 @@ If duplicates are identical after normalization, the pipeline can keep one copy.
 If duplicates conflict on clinical fields, the group should be quarantined for
 review rather than silently choosing one row.
 
+**Identity definition (what counts as "the same record").**
+
+The pipeline compares duplicates by an explicit fingerprint over a curated
+subset of fields rather than the entire normalized record. The fingerprint
+includes: `trialId`, `siteId`, `enrollmentDate`, `age`, `sex`, `weight`,
+`doseLevel`, sorted `adverseEvents`, `responseAssessment`, `lastVisitDate`, and
+`status`. It deliberately **excludes `labNotes`**.
+
+`labNotes` is append-only narrative commentary. Two rows for the same patient
+that differ only in lab notes (e.g. one with "Initial review" and one with
+"Reviewed by oncologist") represent the same clinical reality, not a conflict.
+Including lab notes in identity would cause spurious `conflicting_duplicate`
+quarantines on every benign re-export of the source file. Any clinically
+meaningful disagreement (response assessment, visit date, status, dose, AEs,
+etc.) still triggers a conflict.
+
+When two rows for the same patient match the fingerprint, the first row is
+kept and an `exact_duplicate` issue is counted. When they don't match, every
+row in the conflict group is quarantined as `conflicting_duplicate` so that
+reviewers can see the full set side-by-side. This matches the behavior of
+`PT-003` in the source file, where the two rows disagree on
+`response_assessment` and `last_visit_date`.
+
 **Alternatives considered:**
 
+- Use the entire normalized record as the identity key (e.g. `JSON.stringify`).
+  Simpler to write, but conflates narrative drift in `labNotes` with real
+  clinical conflict, and silently breaks if the schema later gains a field
+  whose serialization is order- or formatting-sensitive.
 - Keep the row with the latest `last_visit_date`. This may be reasonable if the
   feed is known to be append-only updates, but that assumption is not documented.
 - Keep the last row in the file. This is simple but too implicit for clinical

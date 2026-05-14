@@ -144,5 +144,40 @@ describe("data-pipeline", () => {
     expect(result.summary.issuesFound.suspected_pii).toBe(1);
   });
 
-  it.todo("deduplicates conflicting records for the same patient_id");
+  it("deduplicates exact duplicate patient records", () => {
+    const row =
+      "PT-001,NCT-001,SITE-A01,2023-04-12,67,M,82.3,400mg BID,fatigue,No findings,partial_response,2024-01-15,active";
+    const result = runPipeline({ csvText: `${HEADER}\n${row}\n${row}\n` });
+
+    expect(result.clean).toHaveLength(1);
+    expect(result.quarantined).toEqual([]);
+    expect(result.summary.issuesFound.exact_duplicate).toBe(1);
+  });
+
+  it("treats lab_notes as non-identifying when deduplicating", () => {
+    // Two rows for PT-001 with identical clinical fields but different
+    // free-text lab_notes. lab_notes is append-only narrative and should
+    // not, by itself, mark rows as conflicting (see DECISIONS.md).
+    const result = runPipeline({
+      csvText: `${HEADER}\nPT-001,NCT-001,SITE-A01,2023-04-12,67,M,82.3,400mg BID,fatigue,Initial review,partial_response,2024-01-15,active\nPT-001,NCT-001,SITE-A01,2023-04-12,67,M,82.3,400mg BID,fatigue,Reviewed by oncologist,partial_response,2024-01-15,active\n`,
+    });
+
+    expect(result.clean).toHaveLength(1);
+    expect(result.quarantined).toEqual([]);
+    expect(result.summary.issuesFound.exact_duplicate).toBe(1);
+    expect(result.summary.issuesFound.conflicting_duplicate).toBeUndefined();
+  });
+
+  it("quarantines conflicting duplicate patient records", () => {
+    const result = runPipeline({
+      csvText: `${HEADER}\nPT-003,NCT-001,SITE-B03,04/25/2023,58,M,77.5,400mg BID,,PSA decline,partial_response,01/22/2024,active\nPT-003,NCT-001,SITE-B03,04/25/2023,58,M,77.5,400mg BID,,PSA decline confirmed,confirmed_response,03/15/2024,active\n`,
+    });
+
+    expect(result.clean).toEqual([]);
+    expect(result.quarantined).toHaveLength(2);
+    expect(result.quarantined.every((entry) => entry.reasons.includes("conflicting_duplicate"))).toBe(
+      true,
+    );
+    expect(result.summary.issuesFound.conflicting_duplicate).toBe(2);
+  });
 });

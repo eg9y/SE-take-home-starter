@@ -11,6 +11,29 @@ export interface PipelineOptions {
 
 type RawRow = Record<string, string>;
 
+/**
+ * Per-patient bookkeeping built up in a single pass over the input.
+ *
+ * `record` / `raw` / `warnings` are the first occurrence of this patient. We
+ * keep the raw row so that conflict quarantines retain source-row traceability.
+ *
+ * `fingerprint` identifies the first record's clinical identity (see
+ * `recordFingerprint`). Subsequent rows for the same `patientId` are compared
+ * against this fingerprint:
+ *   - same fingerprint -> increment `duplicates` (resolved as `exact_duplicate`)
+ *   - different fingerprint -> push the raw row into `conflictingRaws`
+ *     (resolved as `conflicting_duplicate` for every row in the group,
+ *     including the first one).
+ */
+type PatientEntry = {
+	record: PatientRecord;
+	raw: RawRow;
+	warnings: string[];
+	fingerprint: string;
+	duplicates: number;
+	conflictingRaws: RawRow[];
+};
+
 const REQUIRED_FIELDS = [
 	"patient_id",
 	"trial_id",
@@ -70,13 +93,21 @@ function toIsoDate(year: number, month: number, day: number): string | null {
 		.padStart(2, "0")}-${day.toString().padStart(2, "0")}`;
 }
 
-function parseDate(input: string): { ok: true; iso: string } | { ok: false; reason: string } {
+function parseDate(
+	input: string,
+): { ok: true; iso: string } | { ok: false; reason: string } {
 	const text = input.trim();
 
 	const yearFirst = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(text);
 	if (yearFirst !== null) {
-		const iso = toIsoDate(Number(yearFirst[1]), Number(yearFirst[2]), Number(yearFirst[3]));
-		return iso === null ? { ok: false, reason: "invalid_date" } : { ok: true, iso };
+		const iso = toIsoDate(
+			Number(yearFirst[1]),
+			Number(yearFirst[2]),
+			Number(yearFirst[3]),
+		);
+		return iso === null
+			? { ok: false, reason: "invalid_date" }
+			: { ok: true, iso };
 	}
 
 	const slash = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(text);
@@ -92,7 +123,9 @@ function parseDate(input: string): { ok: true; iso: string } | { ok: false; reas
 		const month = first > 12 ? second : first;
 		const day = first > 12 ? first : second;
 		const iso = toIsoDate(year, month, day);
-		return iso === null ? { ok: false, reason: "invalid_date" } : { ok: true, iso };
+		return iso === null
+			? { ok: false, reason: "invalid_date" }
+			: { ok: true, iso };
 	}
 
 	const monthName = /^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/.exec(text);
@@ -102,7 +135,9 @@ function parseDate(input: string): { ok: true; iso: string } | { ok: false; reas
 			return { ok: false, reason: "invalid_date" };
 		}
 		const iso = toIsoDate(Number(monthName[3]), month, Number(monthName[2]));
-		return iso === null ? { ok: false, reason: "invalid_date" } : { ok: true, iso };
+		return iso === null
+			? { ok: false, reason: "invalid_date" }
+			: { ok: true, iso };
 	}
 
 	return { ok: false, reason: "invalid_date" };
@@ -125,7 +160,9 @@ function parseStatus(input: string): PatientRecord["status"] | null {
 
 function parseResponse(input: string): string | null {
 	const normalized = input.trim();
-	return normalized === "" || normalized.toLowerCase() === "n/a" ? null : normalized;
+	return normalized === "" || normalized.toLowerCase() === "n/a"
+		? null
+		: normalized;
 }
 
 function parseAdverseEvents(input: string): string[] {
@@ -135,9 +172,13 @@ function parseAdverseEvents(input: string): string[] {
 		.filter((event) => event.length > 0);
 }
 
-function normalizeDoseLevel(input: string): { value: string; warnings: string[] } {
+function normalizeDoseLevel(input: string): {
+	value: string;
+	warnings: string[];
+} {
 	const normalized = input.replace(/\s+/g, " ").trim();
-	const simpleDose = /^\d+(?:\.\d+)?\s*(?:mg|mcg|g)(?:\s+(?:qd|bid|tid|qid))?$/i;
+	const simpleDose =
+		/^\d+(?:\.\d+)?\s*(?:mg|mcg|g)(?:\s+(?:qd|bid|tid|qid))?$/i;
 
 	return {
 		value: normalized,
@@ -194,32 +235,41 @@ function normalizeRow(
 	}
 
 	const rawEnrollmentDate = value(raw, "enrollment_date");
-	const enrollmentDate = rawEnrollmentDate === "" ? null : parseDate(rawEnrollmentDate);
+	const enrollmentDate =
+		rawEnrollmentDate === "" ? null : parseDate(rawEnrollmentDate);
 	if (enrollmentDate !== null && !enrollmentDate.ok) {
 		reasons.push(`enrollment_${enrollmentDate.reason}`);
 	}
 	const enrollmentIso = enrollmentDate?.ok === true ? enrollmentDate.iso : "";
 
 	const rawLastVisitDate = value(raw, "last_visit_date");
-	const lastVisitDate = rawLastVisitDate === "" ? null : parseDate(rawLastVisitDate);
+	const lastVisitDate =
+		rawLastVisitDate === "" ? null : parseDate(rawLastVisitDate);
 	if (lastVisitDate !== null && !lastVisitDate.ok) {
 		reasons.push(`last_visit_${lastVisitDate.reason}`);
 	}
 	const lastVisitIso = lastVisitDate?.ok === true ? lastVisitDate.iso : "";
 
-	if (lastVisitIso !== "" && enrollmentIso !== "" && lastVisitIso < enrollmentIso) {
+	if (
+		lastVisitIso !== "" &&
+		enrollmentIso !== "" &&
+		lastVisitIso < enrollmentIso
+	) {
 		reasons.push("date_inconsistency");
 	}
 
 	const rawAge = value(raw, "age");
 	const age = Number(rawAge);
 	if (rawAge !== "" && !Number.isInteger(age)) reasons.push("invalid_age");
-	else if (rawAge !== "" && (age < 18 || age > 120)) reasons.push("implausible_age");
+	else if (rawAge !== "" && (age < 18 || age > 120))
+		reasons.push("implausible_age");
 
 	const rawWeight = value(raw, "weight_kg");
 	const weight = Number(rawWeight);
-	if (rawWeight !== "" && !Number.isFinite(weight)) reasons.push("invalid_weight");
-	else if (rawWeight !== "" && (weight < 30 || weight > 250)) reasons.push("implausible_weight");
+	if (rawWeight !== "" && !Number.isFinite(weight))
+		reasons.push("invalid_weight");
+	else if (rawWeight !== "" && (weight < 30 || weight > 250))
+		reasons.push("implausible_weight");
 
 	const rawSex = value(raw, "sex");
 	const sex = rawSex === "" ? null : parseSex(rawSex);
@@ -261,6 +311,27 @@ function normalizeRow(
 }
 
 /**
+ * Build a stable identity fingerprint for a normalized record.
+ * The unit-separator delimiter (\x1f) is used because it cannot occur in
+ * the upstream CSV data, so the joined string is unambiguous.
+ */
+function recordFingerprint(record: PatientRecord): string {
+	return [
+		record.trialId,
+		record.siteId,
+		record.enrollmentDate,
+		String(record.age),
+		record.sex,
+		String(record.weight),
+		record.doseLevel,
+		[...record.adverseEvents].sort().join(","),
+		record.responseAssessment ?? "",
+		record.lastVisitDate,
+		record.status,
+	].join("\x1f");
+}
+
+/**
  * Run the pipeline against a CSV source and produce clean + quarantined
  * records plus a summary of what happened.
  */
@@ -283,23 +354,67 @@ export function runPipeline(options: PipelineOptions): PipelineResult {
 	// primary key). Quarantine is for recoverable rows. See DECISIONS.md.
 	let dropped = 0;
 
+	const countIssue = (issue: string, amount = 1): void => {
+		issuesFound[issue] = (issuesFound[issue] ?? 0) + amount;
+	};
+
+	// Single pass: normalize each row, then immediately reconcile against any
+	// previously-seen row for the same patient.
+	const seenByPatient = new Map<string, PatientEntry>();
+
 	for (const raw of rows) {
 		const result = normalizeRow(raw);
-		if (result.ok) {
-			clean.push(result.record);
-			for (const warning of result.warnings) {
-				issuesFound[warning] = (issuesFound[warning] ?? 0) + 1;
-			}
-		} else {
+		if (!result.ok) {
 			if (result.drop === true) {
 				dropped += 1;
 			} else {
 				quarantined.push({ record: raw, reasons: result.reasons });
 			}
-			for (const reason of result.reasons) {
-				issuesFound[reason] = (issuesFound[reason] ?? 0) + 1;
-			}
+			for (const reason of result.reasons) countIssue(reason);
+			continue;
 		}
+
+		const fingerprint = recordFingerprint(result.record);
+		const existing = seenByPatient.get(result.record.patientId);
+
+		if (existing === undefined) {
+			seenByPatient.set(result.record.patientId, {
+				record: result.record,
+				raw,
+				warnings: result.warnings,
+				fingerprint,
+				duplicates: 0,
+				conflictingRaws: [],
+			});
+		} else if (existing.fingerprint === fingerprint) {
+			existing.duplicates += 1;
+		} else {
+			existing.conflictingRaws.push(raw);
+		}
+	}
+
+	for (const entry of seenByPatient.values()) {
+		if (entry.conflictingRaws.length > 0) {
+			// Quarantine every row in the conflict group, including the first
+			// occurrence, so reviewers see the full set side-by-side.
+			quarantined.push({
+				record: entry.raw,
+				reasons: ["conflicting_duplicate"],
+			});
+			countIssue("conflicting_duplicate");
+			for (const conflictRaw of entry.conflictingRaws) {
+				quarantined.push({
+					record: conflictRaw,
+					reasons: ["conflicting_duplicate"],
+				});
+				countIssue("conflicting_duplicate");
+			}
+			continue;
+		}
+
+		clean.push(entry.record);
+		for (const warning of entry.warnings) countIssue(warning);
+		if (entry.duplicates > 0) countIssue("exact_duplicate", entry.duplicates);
 	}
 
 	return {
