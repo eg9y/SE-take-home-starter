@@ -16,6 +16,29 @@ vi.mock("@ai-sdk/openai", () => ({
 const express = (await import("express")).default;
 const { trialsRouter } = await import("../routes/trials.js");
 
+async function withTrialsServer(
+	run: (baseUrl: string) => Promise<void>,
+): Promise<void> {
+	const testApp = express();
+	testApp.use(express.json());
+	testApp.use("/trials", trialsRouter);
+
+	const server = testApp.listen(0);
+
+	try {
+		const address = server.address();
+		if (!address || typeof address === "string") {
+			throw new Error("Expected test server to listen on a random port");
+		}
+
+		await run(`http://127.0.0.1:${address.port}`);
+	} finally {
+		await new Promise<void>((resolve, reject) => {
+			server.close((error) => (error ? reject(error) : resolve()));
+		});
+	}
+}
+
 describe("trial-service", () => {
 	describe("getTrialById", () => {
 		it("returns a trial for a valid ID", () => {
@@ -73,35 +96,56 @@ describe("trial-service", () => {
 
 describe("trials routes", () => {
 	it("rejects invalid analysis focus values", async () => {
-		const testApp = express();
-		testApp.use(express.json());
-		testApp.use("/trials", trialsRouter);
-
-		const server = testApp.listen(0);
-
-		try {
-			const address = server.address();
-			if (!address || typeof address === "string") {
-				throw new Error("Expected test server to listen on a random port");
-			}
-
-			const response = await fetch(
-				`http://127.0.0.1:${address.port}/trials/NCT-001/analyze`,
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ focus: "not-real" }),
-				},
-			);
+		await withTrialsServer(async (baseUrl) => {
+			const response = await fetch(`${baseUrl}/trials/NCT-001/analyze`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ focus: "not-real" }),
+			});
 
 			expect(response.status).toBe(400);
 			await expect(response.json()).resolves.toEqual({
 				error: "Invalid focus",
 			});
-		} finally {
-			await new Promise<void>((resolve, reject) => {
-				server.close((error) => (error ? reject(error) : resolve()));
+		});
+	});
+
+	it.each([
+		"/trials?order=sideways",
+		"/trials?phase=IV",
+		"/trials?minEnrollment=abc",
+		"/trials?sponsor=Merck&sponsor=Pathos",
+		"/trials?search=%20%20%20",
+	])("rejects invalid trial query params for %s", async (path) => {
+		await withTrialsServer(async (baseUrl) => {
+			const response = await fetch(`${baseUrl}${path}`);
+
+			expect(response.status).toBe(400);
+			await expect(response.json()).resolves.toEqual({
+				error: "Invalid trial query",
 			});
-		}
+		});
+	});
+
+	it.each([
+		"/trials/" + "x".repeat(129),
+		"/trials/" + "x".repeat(129) + "/summary",
+		"/trials/" + "x".repeat(129) + "/analyze",
+	])("rejects invalid trial route params for %s", async (path) => {
+		await withTrialsServer(async (baseUrl) => {
+			const isAnalyzeRequest = path.endsWith("/analyze");
+			const response = await fetch(`${baseUrl}${path}`, {
+				method: isAnalyzeRequest ? "POST" : "GET",
+				headers: { "Content-Type": "application/json" },
+				...(isAnalyzeRequest
+					? { body: JSON.stringify({ focus: "safety" }) }
+					: {}),
+			});
+
+			expect(response.status).toBe(400);
+			await expect(response.json()).resolves.toEqual({
+				error: "Invalid trial id",
+			});
+		});
 	});
 });

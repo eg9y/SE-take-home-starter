@@ -5,47 +5,80 @@ import {
 	streamAnalysis,
 } from "../services/analysis-service.js";
 import { getTrialById, listTrials } from "../services/trial-service.js";
-import type { ErrorResponse, TrialListResponse } from "../types.js";
-import { analyzeRequestSchema } from "./trial-validation.js";
+import type { ClinicalTrial, ErrorResponse, TrialListResponse } from "../types.js";
+import {
+	analyzeRequestSchema,
+	trialParamsSchema,
+	trialQuerySchema,
+} from "./trial-validation.js";
 
 const router = Router();
 
-router.get("/", (req: Request, res: Response<TrialListResponse>) => {
-	const { phase, status, minEnrollment, sponsor, search, sort, order } =
-		req.query;
+router.get(
+	"/",
+	(req: Request, res: Response<TrialListResponse | ErrorResponse>) => {
+		const parsedQuery = trialQuerySchema.safeParse(req.query);
+		if (!parsedQuery.success) {
+			res.status(400).json({ error: "Invalid trial query" });
+			return;
+		}
 
-	const result = listTrials({
-		phase: phase as string | undefined,
-		status: status as string | undefined,
-		minEnrollment: minEnrollment ? Number(minEnrollment) : undefined,
-		sponsor: sponsor as string | undefined,
-		search: search as string | undefined,
-		sort: sort as string | undefined,
-		order: order as string | undefined,
-	});
+		const query = parsedQuery.data;
+		const filters: Parameters<typeof listTrials>[0] = {};
 
-	res.json(result);
-});
+		if (query.phase !== undefined) filters.phase = query.phase;
+		if (query.status !== undefined) filters.status = query.status;
+		if (query.minEnrollment !== undefined) {
+			filters.minEnrollment = query.minEnrollment;
+		}
+		if (query.sponsor !== undefined) filters.sponsor = query.sponsor;
+		if (query.search !== undefined) filters.search = query.search;
+		if (query.sort !== undefined) filters.sort = query.sort;
+		if (query.order !== undefined) filters.order = query.order;
 
-router.get("/:id", (req: Request, res: Response) => {
-	const trial = getTrialById(req.params.id!);
-	if (!trial) {
-		res.status(404).json({ error: "Trial not found" });
-		return;
-	}
-	res.json(trial);
-});
+		const result = listTrials(filters);
 
-router.get("/:id/summary", (req: Request, res: Response) => {
-	const trial = getTrialById(req.params.id!);
-	if (!trial) {
-		res.status(404).json({ error: "Trial not found" });
-		return;
-	}
+		res.json(result);
+	},
+);
 
-	const summary = getTrialSummary(trial);
-	res.json(summary);
-});
+router.get(
+	"/:id",
+	(req: Request<{ id: string }>, res: Response<ClinicalTrial | ErrorResponse>) => {
+		const parsedParams = trialParamsSchema.safeParse(req.params);
+		if (!parsedParams.success) {
+			res.status(400).json({ error: "Invalid trial id" });
+			return;
+		}
+
+		const trial = getTrialById(parsedParams.data.id);
+		if (!trial) {
+			res.status(404).json({ error: "Trial not found" });
+			return;
+		}
+		res.json(trial);
+	},
+);
+
+router.get(
+	"/:id/summary",
+	(req: Request<{ id: string }>, res: Response) => {
+		const parsedParams = trialParamsSchema.safeParse(req.params);
+		if (!parsedParams.success) {
+			res.status(400).json({ error: "Invalid trial id" });
+			return;
+		}
+
+		const trial = getTrialById(parsedParams.data.id);
+		if (!trial) {
+			res.status(404).json({ error: "Trial not found" });
+			return;
+		}
+
+		const summary = getTrialSummary(trial);
+		res.json(summary);
+	},
+);
 
 router.post(
 	"/:id/analyze",
@@ -53,7 +86,13 @@ router.post(
 		req: Request<{ id: string }, ErrorResponse, unknown>,
 		res: Response<ErrorResponse>,
 	) => {
-		const trial = getTrialById(req.params.id);
+		const parsedParams = trialParamsSchema.safeParse(req.params);
+		if (!parsedParams.success) {
+			res.status(400).json({ error: "Invalid trial id" });
+			return;
+		}
+
+		const trial = getTrialById(parsedParams.data.id);
 		if (!trial) {
 			res.status(404).json({ error: "Trial not found" });
 			return;
