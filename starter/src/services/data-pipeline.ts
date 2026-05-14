@@ -145,6 +145,15 @@ function normalizeDoseLevel(input: string): { value: string; warnings: string[] 
 	};
 }
 
+function containsSuspectedPii(input: string): boolean {
+	return [
+		/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
+		/\bMRN\s*:?\s*\w+/i,
+		/\bSSN\b|\b\d{3}-\w{2}-\d{4}\b/i,
+		/\b(?:patient|dr\.?|cra|contact)\s*:?\s+[A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+)+\b/i,
+	].some((pattern) => pattern.test(input));
+}
+
 /**
  * Parse a CSV string into rows keyed by header name.
  *
@@ -221,6 +230,10 @@ function normalizeRow(
 	if (rawStatus !== "" && status === null) reasons.push("invalid_status");
 
 	const doseLevel = normalizeDoseLevel(value(raw, "dose_level"));
+
+	if (containsSuspectedPii(value(raw, "lab_notes"))) {
+		reasons.push("suspected_pii");
+	}
 
 	if (reasons.length > 0) {
 		return { ok: false, reasons };

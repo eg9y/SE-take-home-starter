@@ -133,7 +133,16 @@ describe("data-pipeline", () => {
     });
   });
 
-  it.todo("flags rows containing suspected PII in free-text fields");
+  it("flags rows containing suspected PII in free-text fields", () => {
+    const result = runPipeline({
+      csvText: `${HEADER}\nPT-004,NCT-001,SITE-B03,2023-05-01,64,M,88.2,400mg BID,nausea,patient: John Williams MRN: 4451892 requires monitoring,stable_disease,2024-02-01,active\n`,
+    });
+
+    expect(result.clean).toEqual([]);
+    expect(result.quarantined).toHaveLength(1);
+    expect(result.quarantined[0]?.reasons).toContain("suspected_pii");
+    expect(result.summary.issuesFound.suspected_pii).toBe(1);
+  });
 
   it.todo("deduplicates conflicting records for the same patient_id");
 });
