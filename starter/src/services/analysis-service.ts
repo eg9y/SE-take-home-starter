@@ -78,10 +78,15 @@ export function getTrialSummary(trial: ClinicalTrial): {
 } {
   const riskScore = calculateRiskScore(trial);
 
+  const responseRateText =
+    trial.responseRate === null
+      ? "Not yet available"
+      : `${trial.responseRate.toFixed(1)}%`;
+
   const summary = [
     `${trial.name} is a Phase ${trial.phase} ${trial.status} trial`,
     `studying ${trial.indication}.`,
-    `Current response rate: ${trial.responseRate!.toFixed(1)}%.`,
+    `Current response rate: ${responseRateText}.`,
     `Adverse event rate: ${trial.adverseEventRate}%.`,
     `Key findings: ${trial.keyFindings.join("; ")}`,
   ].join(" ");
