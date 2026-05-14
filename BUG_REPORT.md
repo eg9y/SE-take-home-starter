@@ -6,8 +6,6 @@
   3. [Search scoring mutates shared trial objects by adding `_score`](#search-scoring-mutates-shared-objects)
   4. [`getTrialSummary()` assumes `responseRate` is never `null`](#gettrialsummary-null-response-rate)
   5. [OpenAI analysis stream has no timeout or client-disconnect cancellation](#openai-stream-no-timeout-or-cancellation)
-  6. [Paid AI analysis endpoint has no rate limiting or authorization](#paid-ai-endpoint-no-rate-limiting-or-authorization)
-  7. [Project has strict TypeScript enabled but does not type-check](#strict-typescript-does-not-type-check)
 - [Medium-priority findings](#medium-priority-findings)
   1. [Trial services return shared mutable objects from memory caches](#trial-services-return-shared-mutable-objects)
   2. [Analysis prompt accepts unbounded trial field lengths](#analysis-prompt-unbounded-field-lengths)
@@ -17,6 +15,8 @@
   - [Whitespace-only search is not normalized](#whitespace-only-search-not-normalized)
   - [Missing `.gitignore`](#missing-gitignore)
   - [Package lock](#package-lock)
+- [Future considerations](#future-considerations)
+  - [Paid AI analysis endpoint has no rate limiting or authorization](#paid-ai-endpoint-no-rate-limiting-or-authorization)
 
 <a id="review-guide"></a>
 
@@ -25,6 +25,7 @@
 - **High priority:** Can cause security, reliability, correctness, data-integrity, type-safety, or cost-control problems in production.
 - **Medium priority:** Defensive/hardening concerns or require another bug/future code path to become user-visible.
 - **Lower priority:** Project-hygiene issues that are worth fixing but are less likely to cause immediate production impact.
+- **Future considerations:** Not bugs in the strict sense, but production-readiness gaps I would block a PR on before exposing this service externally.
 
 <a id="high-priority-findings"></a>
 
@@ -339,87 +340,6 @@ Timeouts must be high enough for legitimate model latency but low enough to cap 
 
 ---
 
-<a id="paid-ai-endpoint-no-rate-limiting-or-authorization"></a>
-
-### 6. Paid AI analysis endpoint has no rate limiting or authorization
-
-**Type:** Security, cost control, abuse prevention  
-**Location:** `starter/src/routes/trials.ts > POST /:id/analyze`
-
-#### Summary
-
-Anyone who can reach the service can repeatedly call `/trials/:id/analyze`, which triggers a paid OpenAI request each time.
-
-#### How to reproduce / evidence
-
-```sh
-for i in {1..100}; do
-  curl -X POST 'http://localhost:3000/trials/NCT-001/analyze' \
-    -H 'Content-Type: application/json' \
-    -d '{"focus":"safety"}' &
-done
-```
-
-#### Production impact
-
-- Unauthenticated users can drive up OpenAI spend.
-- Burst traffic can exhaust rate limits and degrade service for legitimate users.
-- The endpoint is vulnerable to denial-of-wallet style abuse.
-
-#### Suggested fix
-
-Add authentication and rate limiting to AI-backed endpoints. At minimum, apply per-IP throttling and a small burst limit to `/trials/:id/analyze`.
-
-#### Suggested test
-
-```ts
-for (let i = 0; i < limit; i++) await POST("/trials/NCT-001/analyze", validBody);
-expect(await POST("/trials/NCT-001/analyze", validBody)).toReturn(429);
-```
-
-#### Tradeoffs / alternatives
-
-Rate limits should account for internal analyst workflows, but paid AI endpoints should not be left completely open.
-
-
----
-
-<a id="strict-typescript-does-not-type-check"></a>
-
-### 7. Project has strict TypeScript enabled but does not type-check
-
-**Type:** Type safety, build  
-**Location:** Project-wide TypeScript build
-
-#### Summary
-
-The project has strict TypeScript enabled, but the current source does not type-check.
-
-#### How to reproduce / evidence
-
-```sh
-cd starter && npm run build
-```
-
-#### Production impact
-
-- CI/CD builds would fail.
-- If the build is skipped, runtime code can ship with known type-boundary bugs.
-
-#### Suggested fix
-
-Validate and normalize query parameters before constructing `TrialFilters`. Also, do not include optional fields with explicit `undefined` when `exactOptionalPropertyTypes` is enabled.
-
-#### Suggested test
-
-No unit test needed. The regression check is that `npm run build` completes successfully.
-
-#### Tradeoffs / alternatives
-
-None noted.
-
----
-
 <a id="medium-priority-findings"></a>
 
 ## Medium-priority findings
@@ -688,3 +608,50 @@ Important because of .env, but not a runtime app bug.
 ### L3. Package lock
 
 Good reproducibility hygiene.
+
+---
+
+<a id="future-considerations"></a>
+
+## Future considerations
+
+<a id="paid-ai-endpoint-no-rate-limiting-or-authorization"></a>
+
+### F1. Paid AI analysis endpoint has no rate limiting or authorization
+
+**Type:** Security, Performance
+**Location:** `starter/src/routes/trials.ts > POST /:id/analyze`
+
+#### Summary
+
+Anyone who can reach the service can repeatedly call `/trials/:id/analyze`, which triggers a paid OpenAI request each time. 
+
+#### How to reproduce / evidence
+
+```sh
+for i in {1..100}; do
+  curl -X POST 'http://localhost:3000/trials/NCT-001/analyze' \
+    -H 'Content-Type: application/json' \
+    -d '{"focus":"safety"}' &
+done
+```
+
+All 100 requests are served and each one bills OpenAI.
+
+#### Production impact
+
+- Unauthenticated callers can drive up OpenAI spend.
+- Burst traffic can exhaust upstream model rate limits and degrade service for legitimate users.
+- No per-tenant accounting once the service has paying customers.
+
+#### Suggested direction
+
+1. **Authentication first.** Identity is the right key for limits and billing attribution; raw IP is a stopgap. An API-key or session-based identity gate belongs in front of any paid endpoint.
+2. **Per-identity rate limiting.** A token bucket or sliding window keyed on the authenticated principal, sized to internal analyst workflows but capping bursts. Limits should be enforced in a shared store (e.g. Redis) so they hold across replicas.
+3. **Cost guardrails independent of rate limits.** Per-tenant daily/monthly spend caps, plus a circuit breaker on the OpenAI client when error rates or latency spike.
+4. **Observability.** Log per-request token usage and emit a metric so abuse and cost regressions are visible before the bill arrives.
+
+#### Tradeoffs / alternatives
+
+- An in-process per-IP limiter is trivial to add and would mitigate the most obvious abuse, but it doesn't survive horizontal scaling and is bypassable behind NAT or a proxy. I'd avoid shipping it as the "solution" because it creates a false sense of safety.
+- Pushing this entirely to an API gateway (e.g. Kong, Cloudflare, AWS API Gateway) is also viable and may be the right call depending on the deployment topology; the application would then only enforce business-level quotas.

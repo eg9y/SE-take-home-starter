@@ -1,8 +1,41 @@
 import { openai } from "@ai-sdk/openai";
 import { streamText } from "ai";
+import { z } from "zod";
 import type { AnalysisFocus, ClinicalTrial } from "../types.js";
 
+// Bounds prompt-facing trial fields so a single oversized value cannot
+// blow up the LLM prompt (context window, latency, and cost).
+const promptTrialSchema = z.object({
+	id: z.string().max(128),
+	name: z.string().max(256),
+	sponsor: z.string().max(128),
+	indication: z.string().max(256),
+	primaryEndpoint: z.string().max(512),
+	keyFindings: z.array(z.string().max(512)).max(10),
+});
+
+export class PromptValidationError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "PromptValidationError";
+	}
+}
+
+export function buildPromptForTest(
+	trial: ClinicalTrial,
+	focus: AnalysisFocus,
+): string {
+	return buildPrompt(trial, focus);
+}
+
 function buildPrompt(trial: ClinicalTrial, focus: AnalysisFocus): string {
+	const parsed = promptTrialSchema.safeParse(trial);
+	if (!parsed.success) {
+		throw new PromptValidationError(
+			"Trial data exceeds prompt size limits",
+		);
+	}
+
 	const focusInstructions: Record<AnalysisFocus, string> = {
 		safety: `Focus your analysis on:
 1. The nature and severity of adverse events (AE rate: ${trial.adverseEventRate}%)

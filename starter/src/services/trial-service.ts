@@ -22,7 +22,8 @@ function buildCache(): void {
 buildCache();
 
 export function getTrialById(id: string): ClinicalTrial | undefined {
-	return trialCache.get(id);
+	const trial = trialCache.get(id);
+	return trial ? structuredClone(trial) : undefined;
 }
 
 export function listTrials(filters: TrialFilters): {
@@ -57,7 +58,12 @@ export function listTrials(filters: TrialFilters): {
 				if (t.name.toLowerCase().includes(query)) score += 3;
 				if (t.indication.toLowerCase().includes(query)) score += 2;
 				if (t.primaryEndpoint.toLowerCase().includes(query)) score += 1;
-				if (t.keyFindings.includes(query)) score += 2;
+				if (
+					t.keyFindings.some((finding) =>
+						finding.toLowerCase().includes(query),
+					)
+				)
+					score += 2;
 				return { trial: t, score };
 			})
 			.filter(({ score }) => score > 0);
@@ -75,7 +81,7 @@ export function listTrials(filters: TrialFilters): {
 				cmp = a.enrollment - b.enrollment;
 				break;
 			case "startDate":
-				cmp = new Date(b.startDate).getTime() - new Date(a.startDate).getTime();
+				cmp = new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
 				break;
 			case "adverseEventRate":
 				cmp = a.adverseEventRate - b.adverseEventRate;
@@ -86,5 +92,8 @@ export function listTrials(filters: TrialFilters): {
 		return sortOrder === "asc" ? cmp : -cmp;
 	});
 
-	return { trials: results, total: results.length };
+	return {
+		trials: results.map((t) => structuredClone(t)),
+		total: results.length,
+	};
 }

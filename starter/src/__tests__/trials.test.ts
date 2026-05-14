@@ -97,6 +97,43 @@ describe("trial-service", () => {
 				expect(enrollments[i]! >= enrollments[i - 1]!).toBe(true);
 			}
 		});
+
+		it("sorts by startDate ascending when order=asc", () => {
+			const result = listTrials({ sort: "startDate", order: "asc" });
+			const dates = result.trials.map((t) => new Date(t.startDate).getTime());
+			for (let i = 1; i < dates.length; i++) {
+				expect(dates[i]! >= dates[i - 1]!).toBe(true);
+			}
+		});
+
+		it("matches substrings inside keyFindings when searching", () => {
+			const result = listTrials({ search: "dose-proportional" });
+			expect(result.trials.map((t) => t.id)).toContain("NCT-003");
+		});
+	});
+
+	describe("defensive copies", () => {
+		it("getTrialById returns a copy that callers cannot mutate", () => {
+			const trial = getTrialById("NCT-001");
+			expect(trial).toBeDefined();
+			const originalName = trial!.name;
+			trial!.name = "mutated";
+			trial!.keyFindings.push("injected finding");
+
+			const refetched = getTrialById("NCT-001");
+			expect(refetched!.name).toBe(originalName);
+			expect(refetched!.keyFindings).not.toContain("injected finding");
+		});
+
+		it("listTrials returns copies that callers cannot mutate", () => {
+			const first = listTrials({}).trials.find((t) => t.id === "NCT-001");
+			expect(first).toBeDefined();
+			const originalName = first!.name;
+			first!.name = "mutated";
+
+			const second = listTrials({}).trials.find((t) => t.id === "NCT-001");
+			expect(second!.name).toBe(originalName);
+		});
 	});
 });
 

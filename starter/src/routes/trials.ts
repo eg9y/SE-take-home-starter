@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { Router } from "express";
 import {
+	PromptValidationError,
 	getTrialSummary,
 	streamAnalysis,
 } from "../services/analysis-service.js";
@@ -128,9 +129,13 @@ router.post(
 			);
 		} catch (err) {
 			if (!res.headersSent) {
-				res.status(500).json({
-					error: err instanceof Error ? err.message : "Analysis failed",
-				});
+				if (err instanceof PromptValidationError) {
+					res.status(400).json({ error: err.message });
+				} else {
+					res.status(500).json({
+						error: err instanceof Error ? err.message : "Analysis failed",
+					});
+				}
 			}
 		} finally {
 			clearTimeout(timeout);
