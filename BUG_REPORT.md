@@ -62,15 +62,22 @@ curl -X POST 'http://localhost:3000/trials/NCT-003/analyze' \
 
 #### Suggested fix
 
-Validate the request body before calling `streamAnalysis()`. This can be done manually or with a schema validation library such as Zod.
+Validate the request body before calling `streamAnalysis()` using Zod, consistent with route-boundary validation elsewhere.
 
 ```ts
-const validFocuses = ["safety", "efficacy", "competitive"] as const;
+const analyzeRequestSchema = z
+  .object({
+    focus: z.enum(["safety", "efficacy", "competitive"]),
+  })
+  .strict();
 
-if (!validFocuses.includes(focus as any)) {
+const parsedBody = analyzeRequestSchema.safeParse(req.body);
+if (!parsedBody.success) {
   res.status(400).json({ error: "Invalid focus" });
   return;
 }
+
+await streamAnalysis(trial, parsedBody.data.focus, res);
 ```
 
 #### Suggested test
