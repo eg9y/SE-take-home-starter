@@ -84,6 +84,13 @@ describe("trial-service", () => {
 			}
 		});
 
+		it("does not mutate trial objects with a _score property when searching", () => {
+			listTrials({ search: "prostate" });
+			const trial = getTrialById("NCT-001");
+			expect(trial).toBeDefined();
+			expect(trial).not.toHaveProperty("_score");
+		});
+
 		it("sorts by enrollment ascending", () => {
 			const result = listTrials({ sort: "enrollment", order: "asc" });
 			const enrollments = result.trials.map((t) => t.enrollment);
