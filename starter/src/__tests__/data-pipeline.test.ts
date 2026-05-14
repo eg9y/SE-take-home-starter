@@ -57,6 +57,42 @@ describe("data-pipeline", () => {
     expect(result.quarantined[0]?.reasons).toContain("implausible_age");
   });
 
+  it("quarantines rows missing required clinical fields", () => {
+    const result = runPipeline({
+      csvText: `${HEADER}\nPT-011,NCT-001,SITE-B03,2023-07-10,,M,78.9,400mg BID,fatigue,PSA stable,stable_disease,2024-04-01,active\n`,
+    });
+
+    expect(result.clean).toEqual([]);
+    expect(result.summary.totalQuarantined).toBe(1);
+    expect(result.summary.totalDropped).toBe(0);
+    expect(result.quarantined[0]?.reasons).toEqual(["missing_age"]);
+    expect(result.summary.issuesFound.missing_age).toBe(1);
+  });
+
+  it("drops rows missing patient_id because they cannot be reconciled", () => {
+    const result = runPipeline({
+      csvText: `${HEADER}\n,NCT-003,SITE-D01,2024-06-01,57,F,63.5,200mg QD,headache,Lab results pending,N/A,2024-06-01,screen_fail\n`,
+    });
+
+    expect(result.clean).toEqual([]);
+    expect(result.quarantined).toEqual([]);
+    expect(result.summary.totalDropped).toBe(1);
+    expect(result.summary.issuesFound.missing_patient_id).toBe(1);
+  });
+
+  it("accepts missing optional fields with documented defaults", () => {
+    const result = runPipeline({
+      csvText: `${HEADER}\nPT-048,NCT-002,SITE-H01,2021-02-01,49,M,84.2,400mg BID,,,N/A,2022-04-15,completed\n`,
+    });
+
+    expect(result.quarantined).toEqual([]);
+    expect(result.clean[0]).toMatchObject({
+      adverseEvents: [],
+      labNotes: "",
+      responseAssessment: null,
+    });
+  });
+
   it.todo("flags rows containing suspected PII in free-text fields");
 
   it.todo("deduplicates conflicting records for the same patient_id");

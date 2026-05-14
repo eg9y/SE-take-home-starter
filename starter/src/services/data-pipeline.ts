@@ -172,31 +172,41 @@ function normalizeRow(
 		}
 	}
 
-	const enrollmentDate = parseDate(value(raw, "enrollment_date"));
-	if (!enrollmentDate.ok) reasons.push(`enrollment_${enrollmentDate.reason}`);
-	const enrollmentIso = enrollmentDate.ok ? enrollmentDate.iso : "";
+	const rawEnrollmentDate = value(raw, "enrollment_date");
+	const enrollmentDate = rawEnrollmentDate === "" ? null : parseDate(rawEnrollmentDate);
+	if (enrollmentDate !== null && !enrollmentDate.ok) {
+		reasons.push(`enrollment_${enrollmentDate.reason}`);
+	}
+	const enrollmentIso = enrollmentDate?.ok === true ? enrollmentDate.iso : "";
 
-	const lastVisitDate = parseDate(value(raw, "last_visit_date"));
-	if (!lastVisitDate.ok) reasons.push(`last_visit_${lastVisitDate.reason}`);
-	const lastVisitIso = lastVisitDate.ok ? lastVisitDate.iso : "";
+	const rawLastVisitDate = value(raw, "last_visit_date");
+	const lastVisitDate = rawLastVisitDate === "" ? null : parseDate(rawLastVisitDate);
+	if (lastVisitDate !== null && !lastVisitDate.ok) {
+		reasons.push(`last_visit_${lastVisitDate.reason}`);
+	}
+	const lastVisitIso = lastVisitDate?.ok === true ? lastVisitDate.iso : "";
 
 	if (lastVisitIso !== "" && enrollmentIso !== "" && lastVisitIso < enrollmentIso) {
 		reasons.push("date_inconsistency");
 	}
 
-	const age = Number(value(raw, "age"));
-	if (!Number.isInteger(age)) reasons.push("invalid_age");
-	else if (age < 18 || age > 120) reasons.push("implausible_age");
+	const rawAge = value(raw, "age");
+	const age = Number(rawAge);
+	if (rawAge !== "" && !Number.isInteger(age)) reasons.push("invalid_age");
+	else if (rawAge !== "" && (age < 18 || age > 120)) reasons.push("implausible_age");
 
-	const weight = Number(value(raw, "weight_kg"));
-	if (!Number.isFinite(weight)) reasons.push("invalid_weight");
-	else if (weight < 30 || weight > 250) reasons.push("implausible_weight");
+	const rawWeight = value(raw, "weight_kg");
+	const weight = Number(rawWeight);
+	if (rawWeight !== "" && !Number.isFinite(weight)) reasons.push("invalid_weight");
+	else if (rawWeight !== "" && (weight < 30 || weight > 250)) reasons.push("implausible_weight");
 
-	const sex = parseSex(value(raw, "sex"));
-	if (sex === null) reasons.push("invalid_sex");
+	const rawSex = value(raw, "sex");
+	const sex = rawSex === "" ? null : parseSex(rawSex);
+	if (rawSex !== "" && sex === null) reasons.push("invalid_sex");
 
-	const status = parseStatus(value(raw, "status"));
-	if (status === null) reasons.push("invalid_status");
+	const rawStatus = value(raw, "status");
+	const status = rawStatus === "" ? null : parseStatus(rawStatus);
+	if (rawStatus !== "" && status === null) reasons.push("invalid_status");
 
 	if (reasons.length > 0) {
 		return { ok: false, reasons };
