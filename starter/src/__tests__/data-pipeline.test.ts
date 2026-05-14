@@ -77,6 +77,26 @@ describe("data-pipeline", () => {
     expect(result.clean[0]?.sex).toBe("M");
   });
 
+  it("normalizes dose whitespace without changing regimen meaning", () => {
+    const result = runPipeline({
+      csvText: `${HEADER}\nPT-001,NCT-001,SITE-A01,2023-04-12,67,M,82.3,  400mg   BID  ,fatigue,No findings,partial_response,2024-01-15,active\n`,
+    });
+
+    expect(result.quarantined).toEqual([]);
+    expect(result.clean[0]?.doseLevel).toBe("400mg BID");
+    expect(result.summary.issuesFound.non_numeric_dose_level).toBeUndefined();
+  });
+
+  it("accepts combination treatment labels but counts them as non-numeric dose levels", () => {
+    const result = runPipeline({
+      csvText: `${HEADER}\nPT-041,NCT-002,SITE-H01,2020-07-15,54,F,72.1,vemurafenib + cobimetinib,photosensitivity,BRAF confirmed,partial_response,2021-06-01,completed\n`,
+    });
+
+    expect(result.quarantined).toEqual([]);
+    expect(result.clean[0]?.doseLevel).toBe("vemurafenib + cobimetinib");
+    expect(result.summary.issuesFound.non_numeric_dose_level).toBe(1);
+  });
+
   it("quarantines rows missing required clinical fields", () => {
     const result = runPipeline({
       csvText: `${HEADER}\nPT-011,NCT-001,SITE-B03,2023-07-10,,M,78.9,400mg BID,fatigue,PSA stable,stable_disease,2024-04-01,active\n`,

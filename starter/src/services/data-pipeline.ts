@@ -135,6 +135,16 @@ function parseAdverseEvents(input: string): string[] {
 		.filter((event) => event.length > 0);
 }
 
+function normalizeDoseLevel(input: string): { value: string; warnings: string[] } {
+	const normalized = input.replace(/\s+/g, " ").trim();
+	const simpleDose = /^\d+(?:\.\d+)?\s*(?:mg|mcg|g)(?:\s+(?:qd|bid|tid|qid))?$/i;
+
+	return {
+		value: normalized,
+		warnings: simpleDose.test(normalized) ? [] : ["non_numeric_dose_level"],
+	};
+}
+
 /**
  * Parse a CSV string into rows keyed by header name.
  *
@@ -159,7 +169,9 @@ function parseCsv(text: string): { rows: RawRow[] } {
  */
 function normalizeRow(
 	raw: RawRow,
-): { ok: true; record: PatientRecord } | { ok: false; reasons: string[]; drop?: boolean } {
+):
+	| { ok: true; record: PatientRecord; warnings: string[] }
+	| { ok: false; reasons: string[]; drop?: boolean } {
 	const reasons: string[] = [];
 
 	if (value(raw, "patient_id") === "") {
@@ -208,12 +220,15 @@ function normalizeRow(
 	const status = rawStatus === "" ? null : parseStatus(rawStatus);
 	if (rawStatus !== "" && status === null) reasons.push("invalid_status");
 
+	const doseLevel = normalizeDoseLevel(value(raw, "dose_level"));
+
 	if (reasons.length > 0) {
 		return { ok: false, reasons };
 	}
 
 	return {
 		ok: true,
+		warnings: doseLevel.warnings,
 		record: {
 			patientId: value(raw, "patient_id"),
 			trialId: value(raw, "trial_id"),
@@ -222,7 +237,7 @@ function normalizeRow(
 			age,
 			sex: sex as PatientRecord["sex"],
 			weight,
-			doseLevel: value(raw, "dose_level").replace(/\s+/g, " "),
+			doseLevel: doseLevel.value,
 			adverseEvents: parseAdverseEvents(value(raw, "adverse_events")),
 			labNotes: value(raw, "lab_notes"),
 			responseAssessment: parseResponse(value(raw, "response_assessment")),
@@ -259,6 +274,9 @@ export function runPipeline(options: PipelineOptions): PipelineResult {
 		const result = normalizeRow(raw);
 		if (result.ok) {
 			clean.push(result.record);
+			for (const warning of result.warnings) {
+				issuesFound[warning] = (issuesFound[warning] ?? 0) + 1;
+			}
 		} else {
 			if (result.drop === true) {
 				dropped += 1;
