@@ -246,21 +246,41 @@ reviewers can see the full set side-by-side. This matches the behavior of
 
 ### 7. Encoding artifacts
 
-**Decision:** Clean harmless encoding artifacts in text fields.
+**Decision:** Don't normalize encoding artifacts. Preserve text as received.
 
-The file contains punctuation such as em dashes and may contain BOMs or smart
-quotes from external systems. These should be normalized when the meaning is
-unchanged.
+I inspected the source file before writing code for this. The only non-ASCII
+characters in `incoming_patient_data.csv` are 12 em dashes (U+2014), all inside
+`lab_notes`, e.g. `"PSA 22.7 ng/mL, slight increase \u2014 consider dose
+adjustment"`. There are no BOMs, smart quotes, replacement characters
+(U+FFFD), control characters, or mojibake. The file is clean UTF-8.
 
-If a text field contains replacement characters or corruption that could obscure
-clinical meaning, the row should be quarantined.
+Given that, the layered defaults already in place are sufficient:
+
+- `csv-parse` is configured with `bom: true`, so a BOM-prefixed file would be
+  stripped at the parser boundary before any field reaches `normalizeRow`.
+- Per-field `.trim()` handles ASCII whitespace as well as NBSP and other
+  Unicode whitespace that can sneak in via copy-paste from Word/Excel.
+- Em dashes are valid UTF-8 typography, not corruption. They round-trip
+  through JSON, search, and AI prompts without issue, and rewriting them to
+  ASCII (`-` or `--`) is a lossy cosmetic change that would silently break
+  any future code that does string equality against the source.
 
 **Alternatives considered:**
 
-- Leave text exactly as received. This preserves raw data but makes downstream
-  search and AI prompts noisier.
-- Aggressively rewrite notes. I rejected this because free text may contain
-  clinically meaningful nuance.
+- Add speculative detection for U+FFFD, lone surrogates, and non-printable
+  control characters and quarantine rows that contain them. I considered this
+  and rejected it: zero rows in the source file require it, so the validator
+  would ship completely untested against real data, and defensive code that
+  never fires tends to rot. The right time to add it is when an actual
+  corrupted feed appears, with a concrete example to write a test against.
+- ASCII-fy text (em dash \u2014 `--`, smart quotes \u2014 straight quotes,
+  etc.). Rejected because the file does not contain anything that needs it,
+  and rewriting valid Unicode is destructive.
+- Treat encoding hygiene as a row-level concern in this pipeline. If future
+  feeds do introduce mojibake, the better place to catch it is at the
+  source-encoding boundary (file read or HTTP response, where the byte stream
+  is still available), not row-by-row inside `normalizeRow` after the parser
+  has already produced strings.
 
 ## Open questions
 
